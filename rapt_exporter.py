@@ -169,7 +169,8 @@ from prometheus_client.exposition import (
     CONTENT_TYPE_LATEST,
 )
 
-# url == "http://vika:8428/api/v1/import/prometheus"
+
+# see gist https://gist.github.com/f41gh7/85b2eb895bb63b93ce46ef73448c62d0?permalink_comment_id=3597154#gistcomment-3597154
 def push_to_victoriametrics(url, job, registry, timeout=30, handler=default_handler):
     url = f"{url}?extra_label=job={job}"  # &extra_label=instance={INSTANCE}
     data = generate_latest(registry)
