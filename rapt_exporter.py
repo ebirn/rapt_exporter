@@ -16,9 +16,10 @@ http_client.HTTPConnection.debuglevel = 0
 RAPT_EXPORTER_VERSION="0.0.1"
 # init logging
 # You must initialize logging, otherwise you'll not see debug output.
+
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s.%(msecs)03d %(levelname)s %(module)s - %(funcName)s: %(message)s',
+    level = os.environ.get("RAPT_LOG_LEVEL", logging.INFO),
+    format = '%(asctime)s.%(msecs)03d %(levelname)s %(module)s - %(funcName)s: %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
 )
 
@@ -30,7 +31,7 @@ logging.basicConfig(
 
 
 url_hydrometer_list="https://api.rapt.io/api/Hydrometers/GetHydrometers"
-url_hydrometer_telemetry='https://api.rapt.io/api/Hydrometers/GetTelemetry?hydrometerId=1&startDate=2024-11-05&endDate=2024-012-01'
+url_hydrometer_telemetry='https://api.rapt.io/api/Hydrometers/GetTelemetry'
 
 url_token="https://id.rapt.io/connect/token"
 
@@ -49,6 +50,8 @@ disable_created_metrics()
 
 token_renew = datetime.now()
 token_data = None
+# dict per id of collected object
+last_metrics_time = {}
 
 
 # define metrics
@@ -66,24 +69,6 @@ gauge_battery = Gauge('rapt_hydrometer_battery', 'Hydrometer battery', hydromete
 gauge_rssi = Gauge('rapt_hydrometer_rssi', 'Hydrometer rssi', hydrometer_label_names, registry=registry)
 gauge_disabled = Gauge('rapt_hydrometer_disabled', 'Hydrometer is disabled', hydrometer_label_names, registry=registry)
 
-from prometheus_client.exposition import (
-    default_handler,
-    basic_auth_handler,
-    generate_latest,
-    CONTENT_TYPE_LATEST,
-)
-
-# see 
-def push_to_victoriametrics(url, job, registry, timeout=30, handler=default_handler):
-    url = f"{url}?extra_label=job={job}"  # &extra_label=instance={INSTANCE}
-    data = generate_latest(registry)
-    handler(
-        url=url,
-        method="POST",
-        timeout=timeout,
-        headers=[("Content-Type", CONTENT_TYPE_LATEST)],
-        data=data,
-    )()
 
 def renew_token():
     global token_data
@@ -110,8 +95,6 @@ def renew_token():
 
 
 def make_hydrometer_metrics(hydrometer_data):
-
-
     # {'temperature': 31, 
     # 'gravity': 759.941, 
     # 'battery': 0, 
@@ -137,7 +120,6 @@ def make_hydrometer_metrics(hydrometer_data):
         "macAddress": hydrometer_data['macAddress']
     }
 
-
     gauge_fw_version.labels(**hydrometer_labels).set(hydrometer_data['isLatestFirmware'])
     gauge_temp.labels(**hydrometer_labels).set(hydrometer_data['temperature'])   # Set to a given value
     gauge_gravity.labels(**hydrometer_labels).set(hydrometer_data['gravity'])   # Set to a given value
@@ -159,7 +141,6 @@ def renew_expired_token():
         renew_token()
     else:
         logger.info("Token still valid")
-    
     return
 
 from prometheus_client.exposition import (
@@ -171,8 +152,8 @@ from prometheus_client.exposition import (
 
 
 # see gist https://gist.github.com/f41gh7/85b2eb895bb63b93ce46ef73448c62d0?permalink_comment_id=3597154#gistcomment-3597154
-def push_to_victoriametrics(url, job, registry, timeout=30, handler=default_handler):
-    url = f"{url}?extra_label=job={job}"  # &extra_label=instance={INSTANCE}
+def push_to_victoriametrics(url, job, registry, metrics_datetime=datetime.now(), timeout=30, handler=default_handler):
+    url = f"{url}?extra_label=job={job}&timestamp={ int(metrics_datetime.timestamp()*1000) }"   #?extra_label=job={job}"  # &extra_label=instance={INSTANCE}
     data = generate_latest(registry)
     handler(
         url=url,
@@ -189,24 +170,37 @@ def main_loop():
 
     if token_data is not None:
         logger.info("fetching hydrometer list...")
-        hydro_res = requests.get(url_hydrometer_list, headers={"Authorization": f"{token_data['token_type']} {token_data['access_token']}"})
+        auth_header = {"Authorization": f"{token_data['token_type']} {token_data['access_token']}"}
+        hydro_res = requests.get(url_hydrometer_list, headers=auth_header)
 
-        
-        #logger.debug("fetching hydrometer telemetry...")
-        #hydro_telemetry = requests.get(url_hydrometer_telemetry, headers={"Authorization": f"{token_data['token_type']} {token_data['access_token']}"})
         if hydro_res.ok:
             hydro_list = hydro_res.json()
             logger.debug(f"Hydrometer list received: {len(hydro_list)} hydrometers")
             for hydrometer in hydro_list:
                 logger.info(f"  processing Hydrometer: {hydrometer['name']}")
-                try:
-                    make_hydrometer_metrics(hydrometer)
-                    #write_to_textfile('/tmp/hello.prom', registry)
-                    # push_to_gateway('http://10.9.0.10:8428', job='rapt', registry=registry)
-                    
-                    push_to_victoriametrics(push_gateway_url, job='rapt', registry=registry, timeout=30, handler=default_handler)
 
+                # ?hydrometerId=1&startDate=2024-11-05&endDate=2024-012-01
+                # query_params = f"?hydrometerId={ hydrometer['id'] }&startDate=2024-11-05&endDate=2024-11-08"
+                # hydro_telemetry_res = requests.get(url_hydrometer_telemetry + query_params, headers=auth_header)
+                # print(hydro_telemetry_res.text)
+                try:
+                    this_metrics_time = datetime.fromisoformat(hydrometer['lastActivityTime'])
+                    prev_metrics_time = last_metrics_time.get(hydrometer['id'], datetime.fromisoformat("2000-01-01T00:00:00+00:00"))
+                    if this_metrics_time > prev_metrics_time:
+                        import json
+                        logger.debug("  data: %s", json.dumps(hydrometer))
+                        make_hydrometer_metrics(hydrometer)
+                        #write_to_textfile('/tmp/hello.prom', registry)
+                        # push_to_gateway('http://10.9.0.10:8428', job='rapt', registry=registry)
+                        logger.info("  new metrics, from %s", this_metrics_time)
+                        push_to_victoriametrics(push_gateway_url, job='rapt', metrics_datetime=this_metrics_time, registry=registry, timeout=30, handler=default_handler)
+                        last_metrics_time[hydrometer['id']] = this_metrics_time
+                    else:
+                        logger.info("  no new metrics, still current from %s", prev_metrics_time)
+                        pass
+                    
                     logger.info("  done.")
+
                 except Exception as e:
                     logger.error(f"Error processing hydrometer {hydrometer['name']}: {e}")
                     logger.error(f"failed on hydrometer: {hydrometer}")
@@ -214,7 +208,7 @@ def main_loop():
             logger.error("Hydrometer list request failed")
             logger.error(f"Error (status {hydro_res.status_code}): ", hydro_res.text)
             if hydro_res.status_code == 401:
-                logger.error("Token expired, resetting...")
+                logger.error("Token invalid, resetting...")
                 token_data = None
     else:    
         logger.warn("No token available")
