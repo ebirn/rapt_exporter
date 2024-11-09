@@ -55,7 +55,7 @@ last_metrics_time = {}
 
 
 # define metrics
-hydrometer_label_names = ['id', 'name', 'macAddress']
+hydrometer_label_names = ['id', 'name', 'macAddress', 'deviceType']
 
 info_version = Info('rapt_build_version', 'Description of info', registry=registry)
 info_version.info({'version': RAPT_EXPORTER_VERSION})
@@ -117,7 +117,8 @@ def make_hydrometer_metrics(hydrometer_data):
     hydrometer_labels = {
         "id": hydrometer_data['id'], 
         "name": hydrometer_data['name'], 
-        "macAddress": hydrometer_data['macAddress']
+        "macAddress": hydrometer_data['macAddress'],
+        "deviceType": hydrometer_data['deviceType'],
     }
 
     gauge_fw_version.labels(**hydrometer_labels).set(hydrometer_data['isLatestFirmware'])
