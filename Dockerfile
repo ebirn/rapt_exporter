@@ -7,6 +7,9 @@ COPY . /usr/src/app
 
 RUN uv sync
 
-ENV BLA=bla
+ENV RAPT_USERNAME=username-missing
+ENV RAPT_API_KEY=api-key-missing
+ENV RAPT_PUSH_GATEWAY_URL=url-pushserver-missing
+ENV RAPT_LOOP_SLEEP_TIME=300
 
 ENTRYPOINT ["uv", "run", "rapt_exporter.py"]
